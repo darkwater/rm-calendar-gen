@@ -1,5 +1,7 @@
 use egui::{Pos2, Vec2};
 
+use crate::app::page::painter::PdfOps;
+
 mod page;
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -37,19 +39,12 @@ impl eframe::App for TemplateApp {
                 let content_rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(1872., 1404.));
 
                 let mut doc = PdfDocument::new("Calendar");
-                let mut index_contents = vec![
-                    Op::Marker {
-                        id: "index".to_owned(),
-                    },
-                    Op::SetOutlineColor {
-                        col: Color::Greyscale(Greyscale::new(0., None)),
-                    },
-                    Op::SetOutlineThickness { pt: Pt(1.) },
-                ];
+                let mut index_contents = vec![Op::Marker {
+                    id: "index".to_owned(),
+                }];
                 page::Page::Index.paint(
                     &mut page::painter::Painter::Pdf {
-                        ops: &mut index_contents,
-                        page_height: content_rect.height(),
+                        ops: PdfOps::new(&mut index_contents, content_rect.height()),
                     },
                     content_rect,
                 );
@@ -70,13 +65,15 @@ impl eframe::App for TemplateApp {
             }
         });
 
-        page::Page::Index.paint(
-            &mut page::painter::Painter::Egui {
-                ui,
-                painter: ui.painter().with_clip_rect(ui.clip_rect()),
-            },
-            ui.content_rect(),
-        );
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            page::Page::Index.paint(
+                &mut page::painter::Painter::Egui {
+                    ui,
+                    painter: ui.painter().with_clip_rect(ui.clip_rect()),
+                },
+                ui.available_rect_before_wrap(),
+            );
+        });
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

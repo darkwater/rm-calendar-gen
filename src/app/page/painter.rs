@@ -1,5 +1,12 @@
-use egui::{Color32, Pos2, emath::GuiRounding as _};
-use printpdf::{LinePoint, Op, Point, Pt};
+use azul_layout::{
+    font_traits::{BidiDirection, Script, StyleProperties},
+    hyphenation::Language,
+};
+use egui::{Color32, FontId, Pos2, Rect, emath::GuiRounding as _, text::LayoutJob, vec2};
+use printpdf::{
+    BuiltinFont, LinePoint, Mm, Op, PdfFontHandle, Point, Pt, TextItem,
+    text_shaping::ParsedFontTrait as _,
+};
 
 pub enum Painter<'a> {
     Egui {
@@ -7,36 +14,106 @@ pub enum Painter<'a> {
         painter: egui::Painter,
     },
     Pdf {
-        ops: &'a mut Vec<Op>,
-        page_height: f32,
+        ops: PdfOps<'a>,
     },
 }
 
-#[derive(Clone, Copy)]
+pub struct PdfOps<'a> {
+    ops: &'a mut Vec<Op>,
+    page_height: f32,
+    color: Option<Color>,
+    width: Option<Width>,
+}
+
+impl<'a> PdfOps<'a> {
+    pub fn new(ops: &'a mut Vec<Op>, page_height: f32) -> Self {
+        Self {
+            ops,
+            page_height,
+            color: None,
+            width: None,
+        }
+    }
+
+    pub fn y(&self, y: f32) -> f32 {
+        self.page_height - y
+    }
+
+    pub fn push(&mut self, op: Op) {
+        self.ops.push(op);
+    }
+
+    pub fn set_color(&mut self, color: Color) {
+        if self.color == Some(color) {
+            return;
+        }
+
+        self.push(Op::SetOutlineColor {
+            col: color.to_pdf(),
+        });
+        self.color = Some(color);
+    }
+
+    pub fn set_width(&mut self, width: Width) {
+        if self.width == Some(width) {
+            return;
+        }
+
+        self.push(Op::SetOutlineThickness {
+            pt: width.to_pdf().into(),
+        });
+        self.width = Some(width);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
 pub enum Color {
-    Primary,
-    Secondary,
+    Strong,
+    Normal,
+    Weak,
 }
 
 impl Color {
     pub fn to_egui(self, ui: &egui::Ui) -> Color32 {
         match self {
-            Self::Primary => ui.visuals().strong_text_color(),
-            Self::Secondary => ui.visuals().weak_text_color(),
+            Self::Strong => ui.visuals().strong_text_color(),
+            Self::Normal => ui.visuals().text_color(),
+            Self::Weak => ui.visuals().weak_text_color(),
+        }
+    }
+
+    pub fn to_pdf(self) -> printpdf::Color {
+        match self {
+            Self::Strong => printpdf::Color::Greyscale(printpdf::Greyscale::new(0., None)),
+            Self::Normal => printpdf::Color::Greyscale(printpdf::Greyscale::new(0.4, None)),
+            Self::Weak => printpdf::Color::Greyscale(printpdf::Greyscale::new(0.8, None)),
         }
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Width {
+    Thin,
     Normal,
+    Thick,
 }
 
 impl Width {
     pub fn to_egui(self, ui: &egui::Ui) -> f32 {
         match self {
+            Self::Thin => 0.5,
             Self::Normal => 1.,
+            Self::Thick => 2.,
         }
+    }
+
+    pub fn to_pdf(self) -> Mm {
+        match self {
+            Self::Thin => Pt(1.),
+            Self::Normal => Pt(2.),
+            Self::Thick => Pt(4.),
+        }
+        .into()
     }
 }
 
@@ -49,13 +126,15 @@ impl Painter<'_> {
                 }
                 painter.line(points, (width.to_egui(ui), color.to_egui(ui)));
             }
-            Painter::Pdf { ops, page_height } => {
+            Painter::Pdf { ops } => {
+                ops.set_color(color);
+                ops.set_width(width);
                 ops.push(Op::DrawLine {
                     line: printpdf::Line {
                         points: points
                             .into_iter()
                             .map(|p| LinePoint {
-                                p: Point::new(Pt(p.x).into(), Pt(*page_height - p.y).into()),
+                                p: Point::new(Pt(p.x).into(), Pt(ops.y(p.y)).into()),
                                 bezier: false,
                             })
                             .collect(),
@@ -63,6 +142,74 @@ impl Painter<'_> {
                     },
                 });
             }
+        }
+    }
+
+    pub fn text(&mut self, text: impl ToString, rect: egui::Rect, color: Color, font: BuiltinFont) {
+        match self {
+            Painter::Egui { ui, painter } => {
+                let height = rect.height() * 1.25;
+
+                let job = LayoutJob::simple_singleline(
+                    text.to_string(),
+                    FontId::proportional(height),
+                    color.to_egui(ui),
+                );
+                let galley = painter.layout_job(job);
+
+                let width = galley.size().x;
+
+                let target = Rect::from_center_size(rect.center(), vec2(width, rect.height()));
+
+                painter.galley(
+                    target.left_bottom() - vec2(0., height),
+                    galley,
+                    Color32::PLACEHOLDER,
+                );
+            }
+            Painter::Pdf { ops } => {
+                let height = rect.height() * 1.47;
+
+                let text = text.to_string();
+                let shape = font
+                    .get_parsed_font()
+                    .unwrap()
+                    .shape_text(
+                        &text,
+                        Script::Latin,
+                        Language::EnglishUS,
+                        BidiDirection::Ltr,
+                        &StyleProperties {
+                            font_size_px: height,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+
+                let width = shape.iter().map(|g| g.advance).sum::<f32>();
+
+                let target = Rect::from_center_size(rect.center(), vec2(width, rect.height()));
+
+                ops.set_color(color);
+                ops.push(Op::StartTextSection);
+                ops.push(Op::SetFont {
+                    font: PdfFontHandle::Builtin(font),
+                    size: Pt(height),
+                });
+                ops.push(Op::SetTextCursor {
+                    pos: Point::new(Pt(target.left()).into(), Pt(ops.y(target.bottom())).into()),
+                });
+                ops.push(Op::ShowText {
+                    items: vec![TextItem::Text(text)],
+                });
+                ops.push(Op::EndTextSection);
+            }
+        }
+    }
+
+    pub fn debug_rect(&mut self, rect: egui::Rect, color: Color32, label: impl ToString) {
+        if let Painter::Egui { painter, .. } = self {
+            painter.debug_rect(rect, color, label);
         }
     }
 }
