@@ -112,6 +112,8 @@ impl Page {
                             current_day += chrono::Duration::days(1);
                         }
                     }
+
+                    painter.pdf_link(month_idx + 2, cell);
                 }
             }
             Self::Month(year, month) => {

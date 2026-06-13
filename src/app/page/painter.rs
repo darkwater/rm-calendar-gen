@@ -4,8 +4,8 @@ use azul_layout::{
 };
 use egui::{Color32, FontId, Pos2, Rect, emath::GuiRounding as _, text::LayoutJob, vec2};
 use printpdf::{
-    BuiltinFont, LinePoint, Mm, Op, PdfFontHandle, Point, Pt, TextItem,
-    text_shaping::ParsedFontTrait as _,
+    Actions, BorderArray, BuiltinFont, ColorArray, Destination, HighlightingMode, LinePoint,
+    LinkAnnotation, Mm, Op, PdfFontHandle, Point, Pt, TextItem, text_shaping::ParsedFontTrait as _,
 };
 
 pub enum Painter<'a> {
@@ -213,6 +213,34 @@ impl Painter<'_> {
     pub fn debug_rect(&mut self, rect: egui::Rect, color: Color32, label: impl ToString) {
         if let Painter::Egui { painter, .. } = self {
             painter.debug_rect(rect, color, label);
+        }
+    }
+
+    pub fn pdf_link(&mut self, page: usize, cell: Rect) {
+        if let Painter::Pdf { ops } = self {
+            ops.push(Op::LinkAnnotation {
+                link: {
+                    LinkAnnotation {
+                        rect: printpdf::Rect {
+                            x: Pt(cell.left()),
+                            y: Pt(ops.y(cell.bottom())),
+                            width: Pt(cell.width()),
+                            height: Pt(cell.height()),
+                            mode: None,
+                            winding_order: None,
+                        },
+                        border: BorderArray::Solid([0., 0., 0.]),
+                        color: ColorArray::Transparent,
+                        actions: Actions::go_to(Destination::Xyz {
+                            page,
+                            left: None,
+                            top: None,
+                            zoom: None,
+                        }),
+                        highlighting: HighlightingMode::None,
+                    }
+                },
+            });
         }
     }
 }
