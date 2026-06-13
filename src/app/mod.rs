@@ -39,6 +39,7 @@ impl eframe::App for TemplateApp {
                 let content_rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(1872., 1404.));
 
                 let mut doc = PdfDocument::new("Calendar");
+
                 let mut index_contents = vec![Op::Marker {
                     id: "index".to_owned(),
                 }];
@@ -54,9 +55,30 @@ impl eframe::App for TemplateApp {
                     index_contents,
                 );
 
+                let mut pages = vec![index_page];
+
+                for month in 0..12 {
+                    let mut month_contents = vec![Op::Marker {
+                        id: format!("month_{month}"),
+                    }];
+                    page::Page::Month(2026, month).paint(
+                        &mut page::painter::Painter::Pdf {
+                            ops: PdfOps::new(&mut month_contents, content_rect.height()),
+                        },
+                        content_rect,
+                    );
+                    let month_page = PdfPage::new(
+                        Pt(content_rect.width()).into(),
+                        Pt(content_rect.height()).into(),
+                        month_contents,
+                    );
+
+                    pages.push(month_page);
+                }
+
                 let mut warnings = Vec::new();
                 let pdf_bytes: Vec<u8> = doc
-                    .with_pages(vec![index_page])
+                    .with_pages(pages)
                     .save(&PdfSaveOptions::default(), &mut warnings);
 
                 eprintln!("warnings: {warnings:#?}");

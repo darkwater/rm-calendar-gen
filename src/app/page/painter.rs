@@ -51,6 +51,9 @@ impl<'a> PdfOps<'a> {
         self.push(Op::SetOutlineColor {
             col: color.to_pdf(),
         });
+        self.push(Op::SetFillColor {
+            col: color.to_pdf(),
+        });
         self.color = Some(color);
     }
 
@@ -66,7 +69,7 @@ impl<'a> PdfOps<'a> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Color {
     Strong,
     Normal,
@@ -91,7 +94,7 @@ impl Color {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Width {
     Thin,
     Normal,
@@ -173,7 +176,7 @@ impl Painter<'_> {
                 let text = text.to_string();
                 let shape = font
                     .get_parsed_font()
-                    .unwrap()
+                    .expect("parsing builtin font failed")
                     .shape_text(
                         &text,
                         Script::Latin,
@@ -184,7 +187,7 @@ impl Painter<'_> {
                             ..Default::default()
                         },
                     )
-                    .unwrap();
+                    .expect("shaping failed");
 
                 let width = shape.iter().map(|g| g.advance).sum::<f32>();
 
